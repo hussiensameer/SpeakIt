@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Ctext y=%2713%27 font-size=%2713%27%3E🏢%3C/text%3E%3C/svg%3E">
+<title>Task Office</title>
+<style>
+:root{--bg:#10141c;--panel:#181e2a;--panel2:#212939;--line:#2d3649;--fg:#e8ebf2;--mut:#8e98ad;--ok:#43aa8b;--err:#e5566b;--work:#f4b942;--acc:#6d8cff}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}
+#app{display:grid;grid-template-columns:1fr 340px;height:100%}
+#stage{position:relative;overflow:hidden;min-width:0}
+canvas{display:block;width:100%;height:100%;cursor:grab;touch-action:none}
+canvas.drag{cursor:grabbing}
+#hud{position:absolute;left:14px;top:12px;display:flex;gap:8px;align-items:center;pointer-events:none}
+.chip{background:#0d1118cc;border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12px;color:var(--mut);backdrop-filter:blur(4px)}
+.chip b{color:var(--fg);font-weight:600}
+#zoom{position:absolute;left:14px;bottom:14px;display:flex;gap:6px}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
+button:hover{border-color:var(--acc)}
+button.pri{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+button.dng{color:var(--err)}
+button:disabled{opacity:.5;cursor:default}
+#side{background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+#side header{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+#side h1{font-size:16px;margin:0}
+#side header a{color:var(--mut);font-size:12px}
+#body{overflow:auto;padding:14px 16px;flex:1}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);margin:18px 0 8px}
+h2:first-child{margin-top:0}
+label{display:block;font-size:12px;color:var(--mut);margin:10px 0 3px}
+input,select,textarea{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 9px}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--acc);outline-offset:-1px}
+textarea{resize:vertical;min-height:60px}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.days{display:flex;gap:4px;margin-top:2px}
+.days label{margin:0;flex:1}
+.days input{display:none}
+.days span{display:block;text-align:center;padding:5px 0;border:1px solid var(--line);border-radius:6px;cursor:pointer;color:var(--mut);font-size:12px}
+.days input:checked+span{background:var(--acc);border-color:var(--acc);color:#fff}
+.who{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.dot{width:14px;height:14px;border-radius:50%;flex:none}
+.badge{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--mut)}
+.badge.working{color:var(--work);border-color:var(--work)}.badge.done{color:var(--ok);border-color:var(--ok)}.badge.error{color:var(--err);border-color:var(--err)}
+.feed{display:flex;flex-direction:column;gap:6px}
+.item{background:var(--panel2);border-radius:8px;padding:7px 10px;font-size:12px}
+.item .t{color:var(--mut);float:right}
+.item pre{margin:4px 0 0;white-space:pre-wrap;word-break:break-word;font:11px ui-monospace,monospace;color:var(--mut);max-height:90px;overflow:auto}
+.item.error{border-left:3px solid var(--err)}.item.done{border-left:3px solid var(--ok)}.item.running{border-left:3px solid var(--work)}
+.empty{color:var(--mut);font-size:13px}
+.err{color:var(--err);font-size:12px;margin-top:6px;min-height:1em}
+@media(max-width:760px){#app{grid-template-columns:1fr;grid-template-rows:55% 45%}#side{border-left:0;border-top:1px solid var(--line)}}
+</style></head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud"><span class="chip" id="clock"></span><span class="chip" id="count"></span></div>
+    <div id="zoom"><button id="zin" title="Zoom in">+</button><button id="zout" title="Zoom out">−</button><button id="fit">Fit</button></div>
+  </div>
+  <aside id="side">
+    <header><h1>🏢 Task Office</h1><a href="/docs">API docs ↗</a></header>
+    <div id="body"></div>
+  </aside>
+</div>
+
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const DAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+const COLORS = ['#e76f51', '#2a9d8f', '#e9c46a', '#6d6fd8', '#f4a261', '#43aa8b', '#d65db1', '#4ea8de'];
+
+let tasks = [], runs = [], selected = null, mode = 'new'; // mode: 'new' | 'edit'
+let formError = '';
+
+async function api(path, opts = {}) {
+  const res = await fetch('/api' + path, { headers: { 'content-type': 'application/json' }, ...opts });
+  if (res.status === 204) return null;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+async function refresh() {
+  [tasks, runs] = await Promise.all([api('/tasks'), api('/runs?limit=30')]);
+  if (selected && !tasks.find((t) => t.id === selected)) { selected = null; mode = 'new'; }
+  if (!userCam) fit();
+  renderSide();
+  $('#count').innerHTML = `<b>${tasks.length}</b> people · <b>${tasks.filter((t) => t.status === 'working').length}</b> working`;
+}
+
+/* ---------- side panel ---------- */
+const fmtTime = (iso) => iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'never';
+const kindFields = {
+  reminder: (c) => `<label>Message</label><input name="message" value="${esc(c.message)}" placeholder="Stand up and stretch">`,
+  http: (c) => `<label>URL</label><input name="url" value="${esc(c.url)}" placeholder="https://example.com/health">
+    <label>Method</label><select name="method">${['GET', 'POST'].map((m) => `<option ${c.method === m ? 'selected' : ''}>${m}</option>`).join('')}</select>`,
+  claude: (c) => `<label>Prompt (needs ANTHROPIC_API_KEY on the server)</label><textarea name="prompt" placeholder="Summarise today's top AI news in 3 bullets">${esc(c.prompt)}</textarea>`,
+};
+
+function renderSide() {
+  const task = tasks.find((t) => t.id === selected);
+  const editing = mode === 'edit' && task;
+  const v = editing ? task : { name: '', description: '', kind: 'reminder', config: {}, time: '09:00', days: [0, 1, 2, 3, 4, 5, 6], person_name: '', person_color: COLORS[tasks.length % COLORS.length] };
+  const active = document.activeElement?.closest('#form');
+  if (active) return; // don't clobber what the user is typing
+  const taskRuns = task ? runs.filter((r) => r.task_id === task.id) : [];
+  $('#body').innerHTML = `
+    ${task ? `<h2>Selected</h2>
+      <div class="who"><span class="dot" style="background:${esc(task.person_color)}"></span><b>${esc(task.person_name)}</b>
+        <span class="badge ${task.status}">${task.enabled ? task.status : 'off'}</span></div>
+      <div class="empty">${esc(task.name)} · ${esc(task.kind)} · daily ${esc(task.time)} · last run ${fmtTime(task.last_run_at)}</div>
+      <div class="row" style="margin-top:10px">
+        <button class="pri" id="run" ${task.status === 'working' ? 'disabled' : ''}>▶ Run now</button>
+        <button id="edit">Edit</button>
+        <button id="toggle">${task.enabled ? 'Send home' : 'Call in'}</button>
+        <button class="dng" id="del">Fire</button></div>` : ''}
+    <h2>${editing ? 'Edit task' : 'Hire a new task'}</h2>
+    <form id="form">
+      <label>Task name</label><input name="name" required maxlength="100" value="${esc(v.name)}" placeholder="Morning check">
+      <label>Description</label><input name="description" maxlength="500" value="${esc(v.description)}">
+      <div class="row"><div><label>Does what</label>
+        <select name="kind">${Object.keys(kindFields).map((k) => `<option value="${k}" ${v.kind === k ? 'selected' : ''}>${k}</option>`).join('')}</select></div>
+        <div><label>Every day at</label><input type="time" name="time" required value="${esc(v.time)}"></div></div>
+      <div id="kindfields">${kindFields[v.kind](v.config)}</div>
+      <label>Days</label><div class="days">${DAYS.map((d, i) => `<label><input type="checkbox" name="day" value="${i}" ${v.days.includes(i) ? 'checked' : ''}><span>${d}</span></label>`).join('')}</div>
+      <div class="row"><div><label>Person</label><input name="person_name" maxlength="30" value="${esc(v.person_name)}" placeholder="auto"></div>
+        <div><label>Shirt</label><input type="color" name="person_color" value="${esc(v.person_color)}" style="padding:2px;height:34px"></div></div>
+      <div class="row" style="margin-top:12px"><button class="pri" type="submit">${editing ? 'Save changes' : 'Add to office'}</button>
+        ${editing ? '<button type="button" id="cancel">Cancel</button>' : ''}</div>
+      <div class="err" id="ferr">${esc(formError)}</div>
+    </form>
+    <h2>${task ? 'Recent runs · ' + esc(task.person_name) : 'Office activity'}</h2>
+    <div class="feed">${(task ? taskRuns : runs).slice(0, 12).map((r) => `
+      <div class="item ${r.status}"><span class="t">${fmtTime(r.started_at)}</span><b>${esc(r.person_name ?? task?.person_name)}</b> · ${esc(r.task_name ?? task?.name)} <span class="badge">${esc(r.trigger)}</span>
+      ${r.output ? `<pre>${esc(r.output)}</pre>` : ''}</div>`).join('') || '<div class="empty">Nothing has run yet.</div>'}</div>`;
+
+  const form = $('#form');
+  form.kind.onchange = () => { $('#kindfields').innerHTML = kindFields[form.kind.value]({}); };
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const kind = fd.get('kind');
+    const config = {};
+    for (const k of ['message', 'url', 'method', 'prompt']) if (fd.has(k) && fd.get(k) !== '') config[k] = fd.get(k);
+    const body = {
+      name: fd.get('name'), description: fd.get('description'), kind, config, time: fd.get('time'),
+      days: fd.getAll('day').map(Number), person_color: fd.get('person_color'),
+    };
+    if (fd.get('person_name')) body.person_name = fd.get('person_name');
+    try {
+      const saved = editing ? await api('/tasks/' + task.id, { method: 'PUT', body: JSON.stringify(body) })
+                            : await api('/tasks', { method: 'POST', body: JSON.stringify(body) });
+      formError = ''; selected = saved.id; mode = 'new';
+      document.activeElement.blur();
+      await refresh();
+    } catch (err) { $('#ferr').textContent = formError = err.message; }
+  };
+  if (task) {
+    $('#run').onclick = () => api(`/tasks/${task.id}/run`, { method: 'POST' }).catch((e) => alert(e.message));
+    $('#edit').onclick = () => { mode = 'edit'; renderSide(); };
+    $('#toggle').onclick = () => api('/tasks/' + task.id, { method: 'PATCH', body: JSON.stringify({ enabled: !task.enabled }) }).then(refresh);
+    $('#del').onclick = () => confirm(`Fire ${task.person_name} and delete "${task.name}"?`) && api('/tasks/' + task.id, { method: 'DELETE' }).then(refresh);
+  }
+  if (editing) $('#cancel').onclick = () => { mode = 'new'; formError = ''; renderSide(); };
+}
+
+/* ---------- god view ---------- */
+const cv = $('#cv'), ctx = cv.getContext('2d');
+const CELL_W = 230, CELL_H = 215, COLS_MAX = 4, PAD = 90;
+const cam = { x: 0, y: 0, z: 1 };
+let dpr = 1, W = 0, H = 0, userCam = false; // userCam: stop auto-fitting once the user pans/zooms
+
+const layout = () => {
+  const n = Math.max(tasks.length, 1);
+  const cols = Math.min(COLS_MAX, Math.max(2, Math.ceil(Math.sqrt(n * 1.3))));
+  const rows = Math.max(2, Math.ceil(n / cols));
+  return { cols, rows, w: cols * CELL_W + PAD * 2, h: rows * CELL_H + PAD * 2 + 60 };
+};
+const deskPos = (i, L) => ({ x: PAD + (i % L.cols) * CELL_W + CELL_W / 2, y: PAD + 60 + Math.floor(i / L.cols) * CELL_H + CELL_H / 2 });
+
+function fit() {
+  const L = layout();
+  cam.z = Math.min(W / L.w, H / L.h, 1.4);
+  cam.x = (W - L.w * cam.z) / 2; cam.y = (H - L.h * cam.z) / 2;
+}
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  W = cv.clientWidth; H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+}
+new ResizeObserver(() => { const first = !W; resize(); if (first) fit(); }).observe(cv);
+
+const rr = (x, y, w, h, r) => { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); };
+const shade = (hex, f) => { const n = parseInt(hex.slice(1), 16); const c = (s) => Math.max(0, Math.min(255, Math.round(((n >> s) & 255) * f))); return `rgb(${c(16)},${c(8)},${c(0)})`; };
+const SKIN = ['#f1c9a5', '#d9a577', '#b57a4f', '#8a5a3b', '#f6d7bd'];
+const HAIR = ['#2b2118', '#5a3a22', '#161616', '#b5651d', '#7b4b94'];
+const hash = (s) => [...s].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
+
+function drawRoom(L, t) {
+  // floor
+  ctx.fillStyle = '#2a3142'; rr(0, 0, L.w, L.h, 18); ctx.fill();
+  ctx.save(); rr(14, 14, L.w - 28, L.h - 28, 10); ctx.clip();
+  ctx.fillStyle = '#39425a'; ctx.fillRect(0, 0, L.w, L.h);
+  for (let x = 14; x < L.w; x += 40) for (let y = 14; y < L.h; y += 40) {
+    ctx.fillStyle = ((x + y) / 40) % 2 ? '#3b455d' : '#364059'; ctx.fillRect(x, y, 40, 40);
+  }
+  ctx.restore();
+  // top wall strip with window + clock
+  ctx.fillStyle = '#222a3a'; rr(14, 14, L.w - 28, 56, [10, 10, 0, 0]); ctx.fill();
+  for (let i = 0; i < Math.floor((L.w - 140) / 170); i++) {
+    const x = 70 + i * 170;
+    ctx.fillStyle = '#7fb4e8'; rr(x, 24, 110, 34, 4); ctx.fill();
+    ctx.fillStyle = '#ffffff30'; ctx.fillRect(x + 4, 28, 40, 26);
+  }
+  const d = new Date();
+  ctx.fillStyle = '#e8ebf2'; ctx.beginPath(); ctx.arc(L.w - 56, 42, 20, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#222a3a'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  const a = (d.getHours() % 12 + d.getMinutes() / 60) / 12 * Math.PI * 2 - Math.PI / 2, b = d.getMinutes() / 60 * Math.PI * 2 - Math.PI / 2;
+  ctx.beginPath(); ctx.moveTo(L.w - 56, 42); ctx.lineTo(L.w - 56 + Math.cos(a) * 9, 42 + Math.sin(a) * 9); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(L.w - 56, 42); ctx.lineTo(L.w - 56 + Math.cos(b) * 14, 42 + Math.sin(b) * 14); ctx.stroke();
+  // plants + coffee corner
+  for (const [x, y] of [[40, L.h - 44], [L.w - 40, L.h - 44], [40, 100]]) {
+    ctx.fillStyle = '#7a4b2a'; ctx.beginPath(); ctx.arc(x, y, 13, 0, 7); ctx.fill();
+    ctx.fillStyle = '#3f9d5b'; for (let k = 0; k < 6; k++) { ctx.beginPath(); ctx.ellipse(x + Math.cos(k) * 9, y + Math.sin(k) * 9, 10, 5, k, 0, 7); ctx.fill(); }
+  }
+  ctx.fillStyle = '#d9d2c3'; rr(L.w - 150, L.h - 56, 100, 28, 6); ctx.fill();
+  ctx.fillStyle = '#5a4636'; ctx.fillRect(L.w - 138, L.h - 50, 18, 16);
+  ctx.fillStyle = '#9aa3b5'; ctx.font = '11px system-ui'; ctx.textAlign = 'center'; ctx.fillText('☕ coffee', L.w - 100, L.h - 62);
+}
+
+function drawDesk(task, x, y, t) {
+  const color = task.person_color, off = !task.enabled;
+  const working = task.status === 'working';
+  ctx.save(); ctx.translate(x, y);
+  if (off) ctx.globalAlpha = .45;
+  // rug under working people
+  if (working) { ctx.fillStyle = '#f4b94222'; ctx.beginPath(); ctx.ellipse(0, 6, 108, 78, 0, 0, 7); ctx.fill(); }
+  // desk
+  ctx.fillStyle = '#00000030'; rr(-70, -48, 140, 66, 8); ctx.fill();
+  ctx.fillStyle = '#b98b5e'; rr(-72, -52, 140, 64, 8); ctx.fill();
+  ctx.fillStyle = '#c99d6e'; rr(-72, -52, 140, 8, [8, 8, 0, 0]); ctx.fill();
+  // monitor + keyboard
+  const flick = working ? (Math.sin(t / 90) > 0 ? '#9be0ff' : '#6fc4f0') : task.status === 'error' ? '#e5566b' : task.status === 'done' ? '#7be0a8' : '#27304a';
+  ctx.fillStyle = '#1a1f2c'; rr(-26, -48, 52, 30, 3); ctx.fill();
+  ctx.fillStyle = flick; rr(-23, -45, 46, 22, 2); ctx.fill();
+  if (working) { ctx.fillStyle = '#ffffff90'; for (let i = 0; i < 4; i++) ctx.fillRect(-19, -42 + i * 5, 14 + ((t / 120 + i * 7) % 22), 2); }
+  ctx.fillStyle = '#d7dbe5'; rr(-20, -10, 40, 11, 3); ctx.fill();
+  ctx.fillStyle = '#b5bbc9'; for (let i = 0; i < 6; i++) ctx.fillRect(-17 + i * 6.5, -7, 4, 5);
+  // mug / notepad
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(50, -20, 7, 0, 7); ctx.fill();
+  ctx.fillStyle = '#6b4a2f'; ctx.beginPath(); ctx.arc(50, -20, 5, 0, 7); ctx.fill();
+  // chair
+  ctx.fillStyle = '#2b3246'; ctx.beginPath(); ctx.arc(0, 52, 24, 0, 7); ctx.fill();
+  ctx.fillStyle = '#353d54'; ctx.beginPath(); ctx.arc(0, 52, 19, 0, 7); ctx.fill();
+  if (!off) {
+    // person, seen from above (behind them), facing the desk
+    const h = hash(task.person_name), skin = SKIN[h % SKIN.length], hair = HAIR[(h >> 3) % HAIR.length];
+    const shake = task.status === 'error' ? Math.sin(t / 40) * 2 : 0;
+    const bob = working ? Math.sin(t / 110) * 1.2 : Math.sin(t / 900 + h) * 0.8;
+    ctx.save(); ctx.translate(shake, bob);
+    ctx.fillStyle = shade(color, .8); rr(-24, 28, 48, 28, 14); ctx.fill();            // shoulders
+    ctx.fillStyle = color; rr(-22, 26, 44, 24, 12); ctx.fill();
+    // arms
+    const lx = working ? Math.sin(t / 70) * 4 : 0, rx = working ? Math.cos(t / 80) * 4 : 0;
+    ctx.strokeStyle = color; ctx.lineWidth = 9; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-18, 30); ctx.lineTo(-12 + lx, 6 - (working ? Math.abs(lx) : 0)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(18, 30); ctx.lineTo(12 + rx, 6 - (working ? Math.abs(rx) : 0)); ctx.stroke();
+    ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(-12 + lx, 5, 4.5, 0, 7); ctx.arc(12 + rx, 5, 4.5, 0, 7); ctx.fill();
+    // head
+    ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(0, 30, 13, 0, 7); ctx.fill();
+    ctx.fillStyle = hair; ctx.beginPath(); ctx.arc(0, 32, 13.5, 0.15 * Math.PI, 0.85 * Math.PI, true); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 33, 12.5, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    // speech bubble
+    let bubble = null;
+    if (working) bubble = '.'.repeat(1 + Math.floor(t / 300) % 3);
+    else if (task.status === 'done') bubble = '✓';
+    else if (task.status === 'error') bubble = '!';
+    if (bubble) {
+      const by = 40 + (working ? Math.sin(t / 200) * 2 : 0);
+      ctx.fillStyle = '#fff'; rr(28, by, 38, 24, 10); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(30, by + 14); ctx.lineTo(20, by + 22); ctx.lineTo(32, by + 6); ctx.fill();
+      ctx.fillStyle = working ? '#555' : task.status === 'done' ? '#2a9d6a' : '#e5566b';
+      ctx.font = 'bold 15px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(bubble, 47, by + 13);
+    }
+  }
+  ctx.restore();
+  // labels
+  ctx.save(); ctx.translate(x, y); ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  const name = task.person_name, title = task.name.length > 24 ? task.name.slice(0, 23) + '…' : task.name;
+  ctx.font = 'bold 13px system-ui'; ctx.fillStyle = '#fff'; ctx.fillText(name, 0, -62);
+  ctx.font = '11px system-ui'; ctx.fillStyle = '#b8c0d4'; ctx.fillText(title, 0, 96);
+  ctx.fillStyle = off ? '#8e98ad' : '#f4b942'; ctx.fillText(off ? 'off duty' : '⏰ ' + task.time, 0, 110);
+  ctx.restore();
+}
+
+let hit = []; // {id,x,y}
+function frame(t) {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, W, H);
+  ctx.setTransform(dpr * cam.z, 0, 0, dpr * cam.z, dpr * cam.x, dpr * cam.y);
+  const L = layout();
+  drawRoom(L, t);
+  hit = [];
+  tasks.forEach((task, i) => {
+    const p = deskPos(i, L);
+    drawDesk(task, p.x, p.y, t);
+    if (task.id === selected) {
+      ctx.strokeStyle = '#6d8cff'; ctx.lineWidth = 3; ctx.setLineDash([8, 6]); ctx.lineDashOffset = -t / 40;
+      rr(p.x - 92, p.y - 76, 184, 200, 14); ctx.stroke(); ctx.setLineDash([]);
+    }
+    hit.push({ id: task.id, x: p.x, y: p.y });
+  });
+  if (!tasks.length) {
+    ctx.fillStyle = '#9aa3b5'; ctx.font = '16px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('The office is empty — hire your first task on the right →', L.w / 2, L.h / 2);
+  }
+  $('#clock').innerHTML = `<b>${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</b> server time`;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* pan / zoom / click */
+let drag = null;
+const toWorld = (e) => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left - cam.x) / cam.z, y: (e.clientY - r.top - cam.y) / cam.z }; };
+cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false }; });
+cv.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (Math.abs(dx) + Math.abs(dy) > 4) { drag.moved = true; cv.classList.add('drag'); }
+  if (drag.moved) { userCam = true; cam.x = drag.cx + dx; cam.y = drag.cy + dy; }
+});
+cv.addEventListener('pointerup', (e) => {
+  cv.classList.remove('drag');
+  if (drag && !drag.moved) {
+    const p = toWorld(e);
+    const h = hit.find((h) => Math.abs(p.x - h.x) < 80 && p.y > h.y - 70 && p.y < h.y + 120);
+    selected = h ? h.id : null; mode = 'new'; formError = '';
+    document.activeElement?.blur(); renderSide();
+  }
+  drag = null;
+});
+const zoomAt = (f, cx = W / 2, cy = H / 2) => {
+  userCam = true;
+  const z = Math.min(3, Math.max(.25, cam.z * f)), k = z / cam.z;
+  cam.x = cx - (cx - cam.x) * k; cam.y = cy - (cy - cam.y) * k; cam.z = z;
+};
+cv.addEventListener('wheel', (e) => { e.preventDefault(); const r = cv.getBoundingClientRect(); zoomAt(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX - r.left, e.clientY - r.top); }, { passive: false });
+$('#zin').onclick = () => zoomAt(1.25); $('#zout').onclick = () => zoomAt(0.8); $('#fit').onclick = () => { userCam = false; fit(); };
+
+/* live updates */
+refresh();
+const es = new EventSource('/api/events');
+es.addEventListener('change', () => refresh());
+setInterval(refresh, 30000);
+</script>
+</body></html>

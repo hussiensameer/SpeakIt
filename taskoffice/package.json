@@ -1,0 +1,13 @@
+{
+  "name": "taskoffice",
+  "version": "1.0.0",
+  "description": "A daily task agent with a SQLite store, an OpenAPI REST API and a god-view mini office UI",
+  "type": "module",
+  "main": "server.js",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.js\""
+  },
+  "license": "MIT"
+}
