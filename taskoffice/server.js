@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, normalize, extname } from 'node:path';
+import { dirname, join, normalize, extname, sep } from 'node:path';
 import { openDb, makeStore } from './db.js';
 import { Agent, KINDS, dayKey } from './agent.js';
 import { buildSpec } from './openapi.js';
@@ -144,7 +144,7 @@ export function createApp({ dbPath = process.env.DB_PATH || './data/office.db', 
       if (req.method !== 'GET') throw new HttpError(405, 'Method not allowed');
       const file = url.pathname === '/' ? 'index.html' : url.pathname === '/docs' ? 'docs.html' : url.pathname.slice(1);
       const full = normalize(join(PUBLIC, file));
-      if (!full.startsWith(PUBLIC + '/')) throw new HttpError(404, 'Not found');
+      if (!full.startsWith(PUBLIC + sep)) throw new HttpError(404, 'Not found');
       const body = await readFile(full).catch(() => { throw new HttpError(404, 'Not found'); });
       res.writeHead(200, { 'content-type': MIME[extname(full)] || 'application/octet-stream' }).end(body);
     } catch (e) {
