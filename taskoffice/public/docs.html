@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Task Office API</title>
+<style>
+:root{--bg:#fff;--fg:#1c2330;--mut:#6b7488;--card:#f5f6f9;--line:#dde1ea;--get:#2a9d8f;--post:#3d7bd9;--put:#d98c1f;--del:#d1495b}
+@media(prefers-color-scheme:dark){:root{--bg:#141821;--fg:#e6e9f0;--mut:#98a1b5;--card:#1c2230;--line:#2c3447}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
+main{max-width:860px;margin:0 auto;padding:24px 16px 64px}
+a{color:inherit}h1{margin:.2em 0}.mut{color:var(--mut)}
+.op{background:var(--card);border:1px solid var(--line);border-radius:10px;margin:10px 0;padding:10px 14px}
+.m{display:inline-block;min-width:58px;text-align:center;color:#fff;border-radius:6px;font:600 12px monospace;padding:3px 0;margin-right:8px}
+.GET{background:var(--get)}.POST{background:var(--post)}.PUT,.PATCH{background:var(--put)}.DELETE{background:var(--del)}
+code,pre{font:13px ui-monospace,monospace}pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto}
+</style></head><body><main>
+<p><a href="/">← Office</a> · <a href="/openapi.json">openapi.json</a></p>
+<h1 id="t">Task Office API</h1><p class="mut" id="d"></p><div id="ops"></div>
+<h2>Task payload</h2><pre id="schema"></pre>
+<script>
+fetch('/openapi.json').then(r=>r.json()).then(s=>{
+  t.textContent=s.info.title+' '+s.info.version; d.textContent=s.info.description;
+  for(const [path,item] of Object.entries(s.paths))for(const [m,op] of Object.entries(item)){
+    if(m==='parameters')continue;
+    const e=document.createElement('div');e.className='op';
+    const M=m.toUpperCase();
+    e.innerHTML=`<span class="m ${M}">${M}</span><code></code> <span class="mut"></span>`;
+    e.querySelector('code').textContent=path;e.querySelector('.mut').textContent=op.summary;
+    ops.append(e);
+  }
+  schema.textContent=JSON.stringify(s.components.schemas.TaskInput,null,2);
+});
+</script></main></body></html>
